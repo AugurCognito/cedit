@@ -1,4 +1,5 @@
 #include <ctype.h>
+#include <errno.h>
 #include <stdio.h>
 #include <stdlib.h>
 // for the atexit() function
@@ -12,14 +13,22 @@
 struct termios orig_termios;
 // This struct will store the original terminal attributes.
 
+void die(const char *s) {
+  // This function will print the error message and exit the program.
+  perror(s);
+  exit(1);
+}
+
 void disableRawMode() {
   // This function will restore the original terminal attributes.
-  tcsetattr(STDIN_FILENO, TCSAFLUSH, &orig_termios);
+  if (tcsetattr(STDIN_FILENO, TCSAFLUSH, &orig_termios) == -1)
+    die("tcsetattr");
 }
 
 void enableRawMode() {
 
-  tcgetattr(STDIN_FILENO, &orig_termios);
+  if (tcgetattr(STDIN_FILENO, &orig_termios) == -1)
+    die("tcgetattr");
   // tcgetattr() gets the parameters associated with the terminal and stores
   // them in the termios structure.
   atexit(disableRawMode);
@@ -48,7 +57,8 @@ void enableRawMode() {
   // VMIN sets the minimum number of bytes of input needed for read to return
   // VTIME sets the maximum amount of time to wait before read returns.
 
-  tcsetattr(STDIN_FILENO, TCSAFLUSH, &raw);
+  if (tcsetattr(STDIN_FILENO, TCSAFLUSH, &raw))
+    die("tcsetattr");
   // tcsetattr() sets the parameters associated with the terminal.
   // TCSAFLUSH is a flag that specifies when to apply the change.
   // TCSAFLUSH means that the change will occur after all output written to the
@@ -61,8 +71,9 @@ int main() {
 
   while (1) {
     char c = '\0';
-    read(STDIN_FILENO, &c, 1);
-    // read() reads up to n bytes from the standard input into the buffer
+    if (read(STDIN_FILENO, &c, 1) == -1 && errno != EAGAIN)
+      die("read");
+    // read() reads up to n bytes from the standard input.
     if (iscntrl(c)) {
       printf("%d\r\n", c);
     } else {
