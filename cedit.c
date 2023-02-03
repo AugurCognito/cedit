@@ -1,3 +1,4 @@
+/* #includes */
 #include <ctype.h>
 #include <errno.h>
 #include <stdio.h>
@@ -10,9 +11,15 @@
 // unistd.h is a header file that provides access to the POSIX operating system
 // API.
 
+/* data */
 struct termios orig_termios;
 // This struct will store the original terminal attributes.
 
+/* defines */
+#define CTRL_KEY(k) ((k)&0x1f)
+// This macro will return the ASCII value of the control key pressed.
+
+/* terminal */
 void die(const char *s) {
   // This function will print the error message and exit the program.
   perror(s);
@@ -66,24 +73,43 @@ void enableRawMode() {
   // read will be discarded before the change is made.
 }
 
+char editorReadKey() {
+  // This function will read a key from the terminal and return it.
+  int nread;
+  char c;
+  while ((nread = read(STDIN_FILENO, &c, 1)) != 1) {
+    if (nread == -1 && errno != EAGAIN)
+      die("read");
+  }
+  return c;
+}
+
+/* Output functions */
+void editorRefreshScreen() {
+  // This function will clear the screen and draw the welcome message.
+  write(STDOUT_FILENO, "\x1b[2J", 4);
+  // \x1b is the escape character. [2J is the escape sequence that clears the
+  // screen.
+}
+
+/* input functions */
+void editorProcessKeypress() {
+  // This function will read a key from the terminal and process it.
+  char c = editorReadKey();
+  switch (c) {
+  case CTRL_KEY('q'):
+    exit(0);
+    break;
+  }
+}
+
+/* Code Initialsation */
 int main() {
   enableRawMode();
 
   while (1) {
-    char c = '\0';
-    if (read(STDIN_FILENO, &c, 1) == -1 && errno != EAGAIN)
-      die("read");
-    // read() reads up to n bytes from the standard input.
-    if (iscntrl(c)) {
-      printf("%d\r\n", c);
-    } else {
-      printf("%d ('%c')\r\n", c, c);
-    }
-    // if character is a control character then print its ASCII value else print
-    // its ASCII value and the character itself.
-    if (c == 'q')
-      break;
-    // if the character is q then break out of the loop.
+    editorRefreshScreen();
+    editorProcessKeypress();
   };
   return 0;
 }
