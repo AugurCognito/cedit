@@ -26,6 +26,7 @@ struct editorConfig {
 struct editorConfig E;
 
 /* defines */
+#define CEDIT_VERSION "0.0.1"
 #define CTRL_KEY(k) ((k)&0x1f)
 // This macro will return the ASCII value of the control key pressed.
 
@@ -111,31 +112,89 @@ int getWindowSize(int *rows, int *cols) {
   }
 }
 
-/* Output functions */
-void editorDrawRows() {
-  // This function will draw the rows of the editor.
-  int y;
-  for (y = 0; y < E.screenrows; y++) {
+/* buffer */
+struct abuf {
+  // This is a structure that contains the append buffer.
+  char *b;
+  int len;
+};
 
+#define ABUF_INIT                                                              \
+  { NULL, 0 }
+// This macro will initialize the append buffer.
+
+void abAppend(struct abuf *ab, const char *s, int len) {
+  // This function will append a string to the append buffer.
+  char *new = realloc(ab->b, ab->len + len);
+  // realloc() will allocate a new block of memory and copy the contents of the
+  // old block to the new block.
+  if (new == NULL)
+    return;
+  memcpy(&new[ab->len], s, len);
+  // memcpy() copies len bytes from memory area s to memory area new.
+  ab->b = new;
+  ab->len += len;
+}
+
+void abFree(struct abuf *ab) {
+  // This function will free the append buffer.
+  free(ab->b);
+}
+
+/* Output functions */
+void editorDrawRows(struct abuf *ab) {
+  // This function will draw the rows of the editor.
+  //
+  int y;
+
+  for (y = 0; y < E.screenrows; y++) {
+    if (y == E.screenrows / 3) {
+      char welcome[80];
+      int welcomelen = snprintf(welcome, sizeof(welcome), "Cedit -- version %s",
+                                CEDIT_VERSION);
+      // snprintf() is a function that writes the output to a string and returns
+      // the number of characters written.
+      if (welcomelen > E.screencols)
+        welcomelen = E.screencols;
+      int padding = (E.screencols - welcomelen) / 2;
+      if (padding) {
+        abAppend(ab, "~", 1);
+        padding--;
+      }
+      while (padding--)
+        abAppend(ab, " ", 1);
+      abAppend(ab, welcome, welcomelen);
+      // abAppend() appends a string to the append buffer.
+    } else {
+      abAppend(ab, "~", 1);
+    }
+
+    abAppend(ab, "\x1b[K", 3);
+    // This will clear the line after the ~ character.
     if (y < E.screenrows - 1) {
       // if we are not at the last row, move the cursor to the next line.
-      write(STDOUT_FILENO, "\r\n", 2);
+      abAppend(ab, "\r\n", 2);
     }
   }
 }
 
 void editorRefreshScreen() {
   // This function will clear the screen and draw the welcome message.
-  write(STDOUT_FILENO, "\x1b[2J", 4);
-  // \x1b is the escape character. [2J is the escape sequence that clears the
-  // screen.
-  write(STDOUT_FILENO, "\x1b[H", 3);
+  struct abuf ab = ABUF_INIT;
+
+  abAppend(&ab, "\x1b[?25l", 6);
+  // This will hide the cursor.
+  abAppend(&ab, "\x1b[H", 3);
   // \x1b is the escape character. [H is the escape sequence that moves the
   // cursor to the top left corner of the screen.
-  editorDrawRows();
-  write(STDOUT_FILENO, "\x1b[H", 3);
+  editorDrawRows(&ab);
+  abAppend(&ab, "\x1b[H", 3);
   // \x1b is the escape character. [H is the escape sequence that moves the
   // cursor to the top left corner of the screen.
+  abAppend(&ab, "\x1b[?25h", 6);
+  // This will show the cursor.
+  write(STDOUT_FILENO, ab.b, ab.len);
+  abFree(&ab);
 }
 
 /* input functions */
