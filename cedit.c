@@ -18,6 +18,8 @@
 /* data */
 struct editorConfig {
   // This is a structure that contains the editor configuration.
+  int cx, cy;
+  // cx and cy are the cursor position.
   int screenrows;
   int screencols;
   struct termios orig_termios;
@@ -28,6 +30,14 @@ struct editorConfig E;
 /* defines */
 #define CEDIT_VERSION "0.0.1"
 #define CTRL_KEY(k) ((k)&0x1f)
+
+enum editorKey {
+  // This is an enumeration that contains the key codes.
+  ARROW_LEFT = 1000,
+  ARROW_RIGHT = 1001,
+  ARROW_UP = 1002,
+  ARROW_DOWN = 1003
+};
 // This macro will return the ASCII value of the control key pressed.
 
 /* terminal */
@@ -88,7 +98,7 @@ void enableRawMode() {
   // read will be discarded before the change is made.
 }
 
-char editorReadKey() {
+int editorReadKey() {
   // This function will read a key from the terminal and return it.
   int nread;
   char c;
@@ -96,7 +106,27 @@ char editorReadKey() {
     if (nread == -1 && errno != EAGAIN)
       die("read");
   }
-  return c;
+
+  if (c == '\x1b') {
+    // If the key pressed is escape then read the next two bytes and return
+    // escape sequence if it is an escape sequence.
+    // If arrow keys are pressed return corresponding sequence.
+    char seq[3];
+    if (read(STDIN_FILENO, &seq[0], 1) != 1) return '\x1b';
+    if (read(STDIN_FILENO, &seq[1], 1) != 1) return '\x1b';
+    if (seq[0] == '[') {
+      switch (seq[1]) {
+        //
+        case 'A': return ARROW_UP;
+        case 'B': return ARROW_DOWN;
+        case 'C': return ARROW_RIGHT;
+        case 'D': return ARROW_LEFT;
+      }
+    }
+    return '\x1b';
+  } else {
+    return c;
+  }
 }
 
 int getWindowSize(int *rows, int *cols) {
@@ -150,8 +180,8 @@ void editorDrawRows(struct abuf *ab) {
   for (y = 0; y < E.screenrows; y++) {
     if (y == E.screenrows / 3) {
       char welcome[80];
-      int welcomelen = snprintf(welcome, sizeof(welcome), "Cedit -- version %s",
-                                CEDIT_VERSION);
+      int welcomelen = snprintf(welcome, sizeof(welcome),
+                                "\e[1mCedit -- version %s\e[0m", CEDIT_VERSION);
       // snprintf() is a function that writes the output to a string and returns
       // the number of characters written.
       if (welcomelen > E.screencols)
@@ -188,9 +218,10 @@ void editorRefreshScreen() {
   // \x1b is the escape character. [H is the escape sequence that moves the
   // cursor to the top left corner of the screen.
   editorDrawRows(&ab);
-  abAppend(&ab, "\x1b[H", 3);
-  // \x1b is the escape character. [H is the escape sequence that moves the
-  // cursor to the top left corner of the screen.
+  char buf[32];
+  snprintf(buf, sizeof(buf), "\x1b[%d;%dH", E.cy + 1, E.cx + 1);
+  abAppend(&ab, buf, strlen(buf));
+  // This will move the cursor to the position of the cursor.
   abAppend(&ab, "\x1b[?25h", 6);
   // This will show the cursor.
   write(STDOUT_FILENO, ab.b, ab.len);
@@ -198,16 +229,39 @@ void editorRefreshScreen() {
 }
 
 /* input functions */
+void editorMoveCursor(int key) {
+  // This function will move the cursor.
+  switch (key) {
+  case ARROW_LEFT:
+    E.cx--;
+    break;
+  case ARROW_RIGHT:
+    E.cx++;
+    break;
+  case ARROW_UP:
+    E.cy--;
+    break;
+  case ARROW_DOWN:
+    E.cy++;
+    break;
+  }
+}
+
 void editorProcessKeypress() {
   // This function will read a key from the terminal and process it.
-  char c = editorReadKey();
+  int c = editorReadKey();
   switch (c) {
   case CTRL_KEY('q'):
     write(STDOUT_FILENO, "\x1b[2J", 4);
     write(STDOUT_FILENO, "\x1b[H", 3);
     // Clear the screen before exiting
-
     exit(0);
+    break;
+  case ARROW_LEFT:
+  case ARROW_RIGHT:
+  case ARROW_UP:
+  case ARROW_DOWN:
+    editorMoveCursor(c);
     break;
   }
 }
@@ -215,6 +269,9 @@ void editorProcessKeypress() {
 /* Code Initialsation */
 void initEditor() {
   // This function will initialise the editor.
+  E.cx = 0;
+  E.cy = 0;
+
   if (getWindowSize(&E.screenrows, &E.screencols) == -1)
     die("getWindowSize");
 }
