@@ -36,7 +36,12 @@ enum editorKey {
   ARROW_LEFT = 1000,
   ARROW_RIGHT = 1001,
   ARROW_UP = 1002,
-  ARROW_DOWN = 1003
+  ARROW_DOWN = 1003,
+  PAGE_UP = 1004,
+  PAGE_DOWN = 1005,
+  HOME_KEY = 1006,
+  END_KEY = 1007,
+  DEL_KEY = 1008
 };
 // This macro will return the ASCII value of the control key pressed.
 
@@ -115,14 +120,38 @@ int editorReadKey() {
     if (read(STDIN_FILENO, &seq[0], 1) != 1) return '\x1b';
     if (read(STDIN_FILENO, &seq[1], 1) != 1) return '\x1b';
     if (seq[0] == '[') {
-      switch (seq[1]) {
-        //
-        case 'A': return ARROW_UP;
-        case 'B': return ARROW_DOWN;
-        case 'C': return ARROW_RIGHT;
-        case 'D': return ARROW_LEFT;
+      if (seq[1] >= '0' && seq[1] <= '9') {
+        if (read(STDIN_FILENO, &seq[2], 1) != 1) return '\x1b';
+        if (seq[2] == '~') {
+          // If the third byte is ~ then return the corresponding sequence.
+          switch (seq[1]) {
+            case '1': return HOME_KEY;
+            case '3': return DEL_KEY;
+            case '4': return END_KEY;
+            case '5': return PAGE_UP;
+            case '6': return PAGE_DOWN;
+            case '7': return HOME_KEY;
+            case '8': return END_KEY;
+          }
+        }
+      } else {
+        switch (seq[1]) {
+          //
+          case 'A': return ARROW_UP;
+          case 'B': return ARROW_DOWN;
+          case 'C': return ARROW_RIGHT;
+          case 'D': return ARROW_LEFT;
+          case 'H': return HOME_KEY;
+          case 'F': return END_KEY;
+        }
+      }
+    } else if (seq[0] == 'O') {
+    switch (seq[1]) {
+        case 'H': return HOME_KEY;
+        case 'F': return END_KEY;
       }
     }
+
     return '\x1b';
   } else {
     return c;
@@ -233,16 +262,24 @@ void editorMoveCursor(int key) {
   // This function will move the cursor.
   switch (key) {
   case ARROW_LEFT:
-    E.cx--;
+    if (E.cx != 0){
+      E.cx--;
+    }
     break;
   case ARROW_RIGHT:
-    E.cx++;
+    if (E.cx != E.screencols - 1){
+      E.cx++;
+    }
     break;
   case ARROW_UP:
-    E.cy--;
+    if (E.cy != 0){
+      E.cy--;
+    }
     break;
   case ARROW_DOWN:
-    E.cy++;
+    if (E.cy != E.screenrows - 1){
+      E.cy++;
+    }
     break;
   }
 }
@@ -257,6 +294,23 @@ void editorProcessKeypress() {
     // Clear the screen before exiting
     exit(0);
     break;
+
+  case HOME_KEY:
+    E.cx = 0;
+    break;
+  case END_KEY:
+    E.cx = E.screencols - 1;
+    break;
+
+  case PAGE_DOWN:
+  case PAGE_UP:
+  {
+    int times = E.screenrows;
+    while (times--)
+      editorMoveCursor(c == PAGE_UP ? ARROW_UP : ARROW_DOWN);
+  }
+  break;
+
   case ARROW_LEFT:
   case ARROW_RIGHT:
   case ARROW_UP:
