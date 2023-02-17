@@ -32,6 +32,9 @@ struct editorConfig {
   int screencols;
   int numrows;
   // numrows is the number of rows in the file.
+  int rof;
+  int cof;
+  // rof and cof are the row and column offset
   editor_row *row;
   // row is the row of the file.
   struct termios orig_termios;
@@ -288,19 +291,37 @@ void abFree(struct abuf *ab) {
 }
 
 /* Output functions */
+void editorScroll() {
+  // This function will scroll the screen if the cursor is outside the screen.
+  if (E.cy < E.rof) {
+    // If the cursor is above the screen then scroll up.
+    E.rof = E.cy;
+  }
+  if (E.cy >= E.rof + E.screenrows) {
+    // If the cursor is below the screen then scroll down.
+    E.rof = E.cy - E.screenrows + 1;
+  }
+  if (E.cx < E.cof)
+    // If the cursor is to the left of the screen then scroll left.
+    E.cof = E.cx;
+  if (E.cx >= E.cof + E.screencols)
+    // If the cursor is to the right of the screen then scroll right.
+    E.cof = E.cx - E.screencols + 1;
+}
 void editorDrawRows(struct abuf *ab) {
   // This function will draw the rows of the editor.
   //
   int y;
 
   for (y = 0; y < E.screenrows; y++) {
-    if (y >= E.numrows) {
+    int filerow = y + E.ron;
+    if (filerow >= E.numrows) {
       // If the number of rows is less than the number of rows in the terminal
       // then print ~.
       // else print the contents of the row.
       if (y == E.screenrows / 3 && E.numrows == 0) {
-        // If the number of rows is less than the number of rows in the terminal
-        // then print welcome message and not when file is given
+        // If the number of rows is less than the number of rows in the
+        // terminal then print welcome message and not when file is given
         char welcome[80];
         int welcomelen =
             snprintf(welcome, sizeof(welcome), "\e[1mCedit -- version %s\e[0m",
@@ -322,10 +343,10 @@ void editorDrawRows(struct abuf *ab) {
         abAppend(ab, "~", 1);
       }
     } else {
-      int len = E.row[y].size;
+      int len = E.row[filerow].size;
       if (len > E.screencols)
         len = E.screencols;
-      abAppend(ab, E.row[y].chars, len);
+      abAppend(ab, E.row[filerow].chars, len);
     }
 
     abAppend(ab, "\x1b[K", 3);
@@ -339,6 +360,8 @@ void editorDrawRows(struct abuf *ab) {
 
 void editorRefreshScreen() {
   // This function will clear the screen and draw the welcome message.
+
+  editorScroll();
   struct abuf ab = ABUF_INIT;
 
   abAppend(&ab, "\x1b[?25l", 6);
@@ -348,7 +371,8 @@ void editorRefreshScreen() {
   // cursor to the top left corner of the screen.
   editorDrawRows(&ab);
   char buf[32];
-  snprintf(buf, sizeof(buf), "\x1b[%d;%dH", E.cy + 1, E.cx + 1);
+  snprintf(buf, sizeof(buf), "\x1b[%d;%dH", E.cy - E.rof + 1, E.cx - E.cof + 1);
+  // This will move the cursor to the position of the cursor.
   abAppend(&ab, buf, strlen(buf));
   // This will move the cursor to the position of the cursor.
   abAppend(&ab, "\x1b[?25h", 6);
@@ -360,15 +384,27 @@ void editorRefreshScreen() {
 /* input functions */
 void editorMoveCursor(int key) {
   // This function will move the cursor.
+  editor_row *row = (E.cy >= E.numrows) ? NULL : &E.row[E.cy];
+  // if position of cursor is greater than the number of rows in the file then
+  // row will be NULL otherwise it will point to the row of the cursor.
+
   switch (key) {
   case ARROW_LEFT:
     if (E.cx != 0) {
       E.cx--;
+    } else if (E.cy > 0) {
+      // move to the end of the previous line.
+      E.cy--;
+      E.cx = E.row[E.cy].size;
     }
     break;
   case ARROW_RIGHT:
-    if (E.cx != E.screencols - 1) {
+    if (row && E.cx < row->size) {
       E.cx++;
+    } else if (row && E.cx == row->size) {
+      // move to the start of the next line.
+      E.cy++;
+      E.cx = 0;
     }
     break;
   case ARROW_UP:
@@ -377,11 +413,22 @@ void editorMoveCursor(int key) {
     }
     break;
   case ARROW_DOWN:
-    if (E.cy != E.screenrows - 1) {
+    if (E.cy != E.numrows) {
+      // if we are not at the last row of the file, move the cursor down.
       E.cy++;
     }
     break;
   }
+
+  row = (E.cy >= E.numrows) ? NULL : &E.row[E.cy];
+  // same as first check in function
+  int rowlen = row ? row->size : 0;
+  // if row is NULL then rowlen will be 0 otherwise it will be the size of the
+  // row.
+  if (E.cx > rowlen)
+    // move cursor to the end of the row if it is greater than the size of the
+    // row in file.
+    E.cx = rowlen;
 }
 
 void editorProcessKeypress() {
@@ -423,6 +470,8 @@ void initEditor() {
   // This function will initialise the editor.
   E.cx = 0;
   E.cy = 0;
+  E.rof = 0;
+  E.cof = 0;
   E.numrows = 0;
   E.row = NULL;
 
