@@ -32,7 +32,8 @@ struct editorConfig {
   int screencols;
   int numrows;
   // numrows is the number of rows in the file.
-  editor_row row;
+  editor_row *row;
+  // row is the row of the file.
   struct termios orig_termios;
   // This is a structure that contains the original terminal attributes.
 };
@@ -201,6 +202,31 @@ int getWindowSize(int *rows, int *cols) {
   }
 }
 
+/* row functions */
+void editorAppendRow(char *s, size_t len) {
+  // This function will append a row to the end of the row array.
+
+  E.row = realloc(E.row, sizeof(editor_row) * (E.numrows + 1));
+  // realloc() will allocate memory for the new row and copy the old rows to the
+  // new memory location.
+  // The size of the new row is the size of the editor_row struct multiplied by
+  // the number of rows plus one.
+
+  int at = E.numrows;
+  E.row[at].size = len;
+  E.row[at].chars = malloc(len + 1);
+  // malloc() will allocate memory for the characters in the row.
+  // The size of the memory allocated is the length of the string plus one for
+  // the null character.
+
+  memcpy(E.row[at].chars, s, len);
+  // memcpy() will copy the string to the memory allocated.
+
+  E.row[at].chars[len] = '\0';
+  E.numrows++;
+  // Increment the number of rows.
+}
+
 /* file input output */
 void editorOpen(char *filename) {
   // This function will open the file and read the contents into the buffer.
@@ -219,19 +245,13 @@ void editorOpen(char *filename) {
   //  size of allocated memory in linecap.It will also store the length of the
   //  line in linelen.
 
-  if (linelen != -1) {
-    // if the line is not empty then add it to the buffer.
+  while ((linelen = getline(&line, &linecap, fp)) != -1) {
+    // read the rest of the lines.
     while (linelen > 0 &&
            (line[linelen - 1] == '\n' || line[linelen - 1] == '\r'))
       linelen--;
-
-    E.row.size = linelen;
-    E.row.chars = malloc(linelen + 1);
-    memcpy(E.row.chars, line, linelen);
-    E.row.chars[linelen] = '\0';
-    E.numrows = 1;
-    // line is added to the editor buffer.
-    // E.numrows is incremented.
+    // remove the newline character from the end of the line.
+    editorAppendRow(line, linelen);
   }
   free(line);
   fclose(fp);
@@ -302,10 +322,10 @@ void editorDrawRows(struct abuf *ab) {
         abAppend(ab, "~", 1);
       }
     } else {
-      int len = E.row.size;
+      int len = E.row[y].size;
       if (len > E.screencols)
         len = E.screencols;
-      abAppend(ab, E.row.chars, len);
+      abAppend(ab, E.row[y].chars, len);
     }
 
     abAppend(ab, "\x1b[K", 3);
@@ -404,6 +424,7 @@ void initEditor() {
   E.cx = 0;
   E.cy = 0;
   E.numrows = 0;
+  E.row = NULL;
 
   if (getWindowSize(&E.screenrows, &E.screencols) == -1)
     die("getWindowSize");
