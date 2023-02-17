@@ -4,6 +4,8 @@
 #include <stdio.h>
 #include <sys/ioctl.h>
 // ioctl provides terminal size
+#include <sys/types.h>
+// for the open() function
 #include <stdlib.h>
 // for the atexit() function
 #include <string.h>
@@ -16,12 +18,21 @@
 // API.
 
 /* data */
+typedef struct editor_row {
+  // data type for the row
+  int size;
+  char *chars;
+} editor_row;
+
 struct editorConfig {
   // This is a structure that contains the editor configuration.
   int cx, cy;
   // cx and cy are the cursor position.
   int screenrows;
   int screencols;
+  int numrows;
+  // numrows is the number of rows in the file.
+  editor_row row;
   struct termios orig_termios;
   // This is a structure that contains the original terminal attributes.
 };
@@ -171,6 +182,43 @@ int getWindowSize(int *rows, int *cols) {
   }
 }
 
+/* file input output */
+void editorOpen(char *filename) {
+  // This function will open the file and read the contents into the buffer.
+
+  FILE *fp = fopen(filename, "r"); // open file in read mode.
+  if (!fp)
+    // if file does not exist then kill the program.
+    die("fopen");
+
+  char *line = NULL;  // line will store the line read from the file.
+  size_t linecap = 0; // linecap will store the allocated size of the line.
+  ssize_t linelen;    // linelen will store the length of the line.
+
+  linelen = getline(&line, &linecap, fp);
+  //  read the first line getline() will allocate memory for line and store the
+  //  size of allocated memory in linecap.It will also store the length of the
+  //  line in linelen.
+
+  if (linelen != -1) {
+    // if the line is not empty then add it to the buffer.
+    while (linelen > 0 &&
+           (line[linelen - 1] == '\n' || line[linelen - 1] == '\r'))
+      linelen--;
+
+    E.row.size = linelen;
+    E.row.chars = malloc(linelen + 1);
+    memcpy(E.row.chars, line, linelen);
+    E.row.chars[linelen] = '\0';
+    E.numrows = 1;
+    // line is added to the editor buffer.
+    // E.numrows is incremented.
+  }
+  free(line);
+  fclose(fp);
+  // free the memory allocated to line and close the file.
+}
+
 /* buffer */
 struct abuf {
   // This is a structure that contains the append buffer.
@@ -207,25 +255,38 @@ void editorDrawRows(struct abuf *ab) {
   int y;
 
   for (y = 0; y < E.screenrows; y++) {
-    if (y == E.screenrows / 3) {
-      char welcome[80];
-      int welcomelen = snprintf(welcome, sizeof(welcome),
-                                "\e[1mCedit -- version %s\e[0m", CEDIT_VERSION);
-      // snprintf() is a function that writes the output to a string and returns
-      // the number of characters written.
-      if (welcomelen > E.screencols)
-        welcomelen = E.screencols;
-      int padding = (E.screencols - welcomelen) / 2;
-      if (padding) {
+    if (y >= E.numrows) {
+      // If the number of rows is less than the number of rows in the terminal
+      // then print ~.
+      // else print the contents of the row.
+      if (y == E.screenrows / 3 && E.numrows == 0) {
+        // If the number of rows is less than the number of rows in the terminal
+        // then print welcome message and not when file is given
+        char welcome[80];
+        int welcomelen =
+            snprintf(welcome, sizeof(welcome), "\e[1mCedit -- version %s\e[0m",
+                     CEDIT_VERSION);
+        // snprintf() is a function that writes the output to a string and
+        // returns the number of characters written.
+        if (welcomelen > E.screencols)
+          welcomelen = E.screencols;
+        int padding = (E.screencols - welcomelen) / 2;
+        if (padding) {
+          abAppend(ab, "~", 1);
+          padding--;
+        }
+        while (padding--)
+          abAppend(ab, " ", 1);
+        abAppend(ab, welcome, welcomelen);
+        // abAppend() appends a string to the append buffer.
+      } else {
         abAppend(ab, "~", 1);
-        padding--;
       }
-      while (padding--)
-        abAppend(ab, " ", 1);
-      abAppend(ab, welcome, welcomelen);
-      // abAppend() appends a string to the append buffer.
     } else {
-      abAppend(ab, "~", 1);
+      int len = E.row.size;
+      if (len > E.screencols)
+        len = E.screencols;
+      abAppend(ab, E.row.chars, len);
     }
 
     abAppend(ab, "\x1b[K", 3);
@@ -325,15 +386,18 @@ void initEditor() {
   // This function will initialise the editor.
   E.cx = 0;
   E.cy = 0;
+  E.numrows = 0;
 
   if (getWindowSize(&E.screenrows, &E.screencols) == -1)
     die("getWindowSize");
 }
 
-int main() {
+int main(int argc, char *argv[]) {
   enableRawMode();
   initEditor();
-
+  if (argc >= 2) {
+    editorOpen(argv[1]);
+  }
   while (1) {
     editorRefreshScreen();
     editorProcessKeypress();
