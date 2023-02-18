@@ -17,6 +17,17 @@
 // unistd.h is a header file that provides access to the POSIX operating system
 // API.
 
+char *my_strdup(const char *s) {
+  // due to lack of strdup() in C89
+    size_t len = strlen(s) + 1;
+    char *dup = malloc(len);
+    if (dup == NULL) {
+        return NULL;  // allocation failed
+    }
+    memcpy(dup, s, len);
+    return dup;
+}
+
 /* data */
 typedef struct editor_row {
   // data type for the row
