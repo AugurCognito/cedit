@@ -6,6 +6,8 @@
 // ioctl provides terminal size
 #include <sys/types.h>
 // for the open() function
+#include <stdarg.h>
+// used for argument lists
 #include <stdlib.h>
 // for the atexit() function
 #include <string.h>
@@ -13,19 +15,21 @@
 #include <termios.h>
 // termios.h is a header file that provides access to the POSIX terminal
 // interface. These being different input and output modes.
+#include <time.h>
+// for the time() function
 #include <unistd.h>
 // unistd.h is a header file that provides access to the POSIX operating system
 // API.
 
 char *my_strdup(const char *s) {
   // due to lack of strdup() in C89
-    size_t len = strlen(s) + 1;
-    char *dup = malloc(len);
-    if (dup == NULL) {
-        return NULL;  // allocation failed
-    }
-    memcpy(dup, s, len);
-    return dup;
+  size_t len = strlen(s) + 1;
+  char *dup = malloc(len);
+  if (dup == NULL) {
+    return NULL; // allocation failed
+  }
+  memcpy(dup, s, len);
+  return dup;
 }
 
 /* data */
@@ -54,6 +58,9 @@ struct editorConfig {
   // rof and cof are the row and column offset
   editor_row *row;
   // row is the row of the file.
+  char *filename;
+  char statusmsg[80];
+  time_t statusmsg_time;
   struct termios orig_termios;
   // This is a structure that contains the original terminal attributes.
 };
@@ -302,6 +309,10 @@ void editorAppendRow(char *s, size_t len) {
 void editorOpen(char *filename) {
   // This function will open the file and read the contents into the buffer.
 
+  free(E.filename);
+  E.filename = my_strdup(filename);
+  // strdup() will allocate memory for the filename and copy the filename to
+
   FILE *fp = fopen(filename, "r"); // open file in read mode.
   if (!fp)
     // if file does not exist then kill the program.
@@ -383,7 +394,6 @@ void editorScroll() {
 }
 void editorDrawRows(struct abuf *ab) {
   // This function will draw the rows of the editor.
-  //
   int y;
 
   for (y = 0; y < E.screenrows; y++) {
@@ -428,11 +438,50 @@ void editorDrawRows(struct abuf *ab) {
 
     abAppend(ab, "\x1b[K", 3);
     // This will clear the line after the ~ character.
-    if (y < E.screenrows - 1) {
-      // if we are not at the last row, move the cursor to the next line.
-      abAppend(ab, "\r\n", 2);
+    abAppend(ab, "\r\n", 2);
+    // This will move the cursor to the next line.
+  }
+}
+
+void editorDrawStatusBar(struct abuf *ab) {
+  // This function will draw the status bar.
+  abAppend(ab, "\x1b[7m", 4);
+  // This will set the background color of the status bar.
+
+  char status[80], rst[20];
+  // status will store the status of the editor.
+  // rst will store the reset sequence.
+  int len = snprintf(status, sizeof(status), "%.20s - %d lines",
+                     E.filename ? E.filename : "[No Name]", E.numrows);
+  // print the status of the editor.
+  int rlen = snprintf(rst, sizeof(rst), "%d:%d/%d", E.rx, E.cy + 1, E.numrows);
+  // print the reset sequence.
+
+  if (len > E.screencols)
+    len = E.screencols;
+  abAppend(ab, status, len);
+
+  while (len < E.screencols) {
+    if (E.screencols - len == rlen) {
+      abAppend(ab, rst, rlen);
+      break;
+    } else {
+      abAppend(ab, " ", 1);
+      len++;
     }
   }
+  abAppend(ab, "\x1b[m",
+           3); // This will reset the background color of the status bar.
+  abAppend(ab, "\r\n", 2); // This will move the cursor to the next line.
+}
+
+void editorDrawMessageBar(struct abuf *ab) {
+  abAppend(ab, "\x1b[K", 3);
+  int msglen = strlen(E.statusmsg);
+  if (msglen > E.screencols)
+    msglen = E.screencols;
+  if (msglen && time(NULL) - E.statusmsg_time < 5)
+    abAppend(ab, E.statusmsg, msglen);
 }
 
 void editorRefreshScreen() {
@@ -446,7 +495,11 @@ void editorRefreshScreen() {
   abAppend(&ab, "\x1b[H", 3);
   // \x1b is the escape character. [H is the escape sequence that moves the
   // cursor to the top left corner of the screen.
+
   editorDrawRows(&ab);
+  editorDrawStatusBar(&ab);
+  editorDrawMessageBar(&ab);
+
   char buf[32];
   snprintf(buf, sizeof(buf), "\x1b[%d;%dH", E.cy - E.rof + 1, E.rx - E.cof + 1);
   // This will move the cursor to the position of the cursor.
@@ -458,6 +511,20 @@ void editorRefreshScreen() {
   abFree(&ab);
 }
 
+void editorSetStatusMessage(const char *fmt, ...) {
+  // This function will set the status message.
+  va_list ap;
+  // va_list is a type that is used to store the list of arguments.
+  va_start(ap, fmt);
+  // va_start() is a macro that initializes the va_list variable.
+  vsnprintf(E.statusmsg, sizeof(E.statusmsg), fmt, ap);
+  // vsnprintf() is a function that writes the output to a string and returns
+  // the number of characters written.
+  va_end(ap);
+  // va_end() is a macro that cleans up the va_list variable.
+  E.statusmsg_time = time(NULL);
+  // time() returns the current time.
+}
 /* input functions */
 void editorMoveCursor(int key) {
   // This function will move the cursor.
@@ -523,11 +590,21 @@ void editorProcessKeypress() {
     E.cx = 0;
     break;
   case END_KEY:
-    E.cx = E.screencols - 1;
+    if (E.cy < E.numrows)
+      E.cx = E.row[E.cy].size;
     break;
 
   case PAGE_DOWN:
   case PAGE_UP: {
+    if (c == PAGE_UP) {
+      // move the cursor to the top of the screen.
+      E.cy = E.rof;
+    } else if (c == PAGE_DOWN) {
+      // move the cursor to the bottom of the screen.
+      E.cy = E.rof + E.screenrows - 1;
+      if (E.cy > E.numrows)
+        E.cy = E.numrows;
+    }
     int times = E.screenrows;
     while (times--)
       editorMoveCursor(c == PAGE_UP ? ARROW_UP : ARROW_DOWN);
@@ -552,9 +629,13 @@ void initEditor() {
   E.cof = 0;
   E.numrows = 0;
   E.row = NULL;
+  E.filename = NULL;
+  E.statusmsg[0] = '\0';
+  E.statusmsg_time = 0;
 
   if (getWindowSize(&E.screenrows, &E.screencols) == -1)
     die("getWindowSize");
+  E.screenrows -= 2;
 }
 
 int main(int argc, char *argv[]) {
@@ -563,6 +644,9 @@ int main(int argc, char *argv[]) {
   if (argc >= 2) {
     editorOpen(argv[1]);
   }
+
+  editorSetStatusMessage("HELP: Ctrl-S = save | Ctrl-Q = quit");
+
   while (1) {
     editorRefreshScreen();
     editorProcessKeypress();
