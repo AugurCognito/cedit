@@ -21,13 +21,19 @@
 typedef struct editor_row {
   // data type for the row
   int size;
+  int rsize;
+  // rsize is the size of the rendered row
   char *chars;
+  char *render;
+  // render is the rendered row
 } editor_row;
 
 struct editorConfig {
   // This is a structure that contains the editor configuration.
   int cx, cy;
   // cx and cy are the cursor position.
+  int rx;
+  // rx is the position of the cursor in the rendered row.
   int screenrows;
   int screencols;
   int numrows;
@@ -44,6 +50,7 @@ struct editorConfig E;
 
 /* defines */
 #define CEDIT_VERSION "0.0.1"
+#define CEDIT_TAB_STOP 4
 #define CTRL_KEY(k) ((k)&0x1f)
 
 enum editorKey {
@@ -206,14 +213,59 @@ int getWindowSize(int *rows, int *cols) {
 }
 
 /* row functions */
+int editorRowCxtoRx(editor_row *row, int cx) {
+  // creates character index to render index mapping.
+  int rx = 0;
+  int j;
+  for (j = 0; j < cx; j++) {
+    // if the character is a tab then add 8 - (rx % 8) to rx.
+    // else add 1 to rx.
+    if (row->chars[j] == '\t')
+      rx += (CEDIT_TAB_STOP - 1) - (rx % CEDIT_TAB_STOP);
+    rx++;
+  }
+  return rx;
+}
+
+void editorUpdateRow(editor_row *row) {
+  // This function will update the row by calculating the number of tabs and
+  // non-tab characters in the row.
+  int tabs = 0;
+  int j = 0;
+
+  for (j = 0; j < row->size; j++)
+    if (row->chars[j] == '\t')
+      tabs++;
+
+  free(row->render);
+  // free the memory allocated to the render string.
+  row->render = malloc(row->size + tabs * (CEDIT_TAB_STOP - 1) + 1);
+  // allocate memory for the render string.
+
+  int idx = 0;
+  for (j = 0; j < row->size; j++) {
+    // loop through the row and copy the characters to the render string.
+    if (row->chars[j] == '\t') {
+      // if the character is a tab then copy 7 spaces to the render string.
+      row->render[idx++] = ' ';
+      while (idx % CEDIT_TAB_STOP != 0)
+        row->render[idx++] = ' ';
+    } else {
+      row->render[idx++] = row->chars[j];
+    }
+  }
+  row->render[idx] = '\0';
+  // add the null character at the end of the render string.
+  row->rsize = idx;
+}
+
 void editorAppendRow(char *s, size_t len) {
   // This function will append a row to the end of the row array.
 
   E.row = realloc(E.row, sizeof(editor_row) * (E.numrows + 1));
-  // realloc() will allocate memory for the new row and copy the old rows to the
-  // new memory location.
-  // The size of the new row is the size of the editor_row struct multiplied by
-  // the number of rows plus one.
+  // realloc() will allocate memory for the new row and copy the old rows to
+  // the new memory location. The size of the new row is the size of the
+  // editor_row struct multiplied by the number of rows plus one.
 
   int at = E.numrows;
   E.row[at].size = len;
@@ -226,6 +278,11 @@ void editorAppendRow(char *s, size_t len) {
   // memcpy() will copy the string to the memory allocated.
 
   E.row[at].chars[len] = '\0';
+  // The last character of the string is set to null character.
+  E.row[at].rsize = 0;
+  E.row[at].render = NULL;
+  editorUpdateRow(&E.row[at]);
+
   E.numrows++;
   // Increment the number of rows.
 }
@@ -244,9 +301,9 @@ void editorOpen(char *filename) {
   ssize_t linelen;    // linelen will store the length of the line.
 
   linelen = getline(&line, &linecap, fp);
-  //  read the first line getline() will allocate memory for line and store the
-  //  size of allocated memory in linecap.It will also store the length of the
-  //  line in linelen.
+  //  read the first line getline() will allocate memory for line and store
+  //  the size of allocated memory in linecap.It will also store the length of
+  //  the line in linelen.
 
   while ((linelen = getline(&line, &linecap, fp)) != -1) {
     // read the rest of the lines.
@@ -293,6 +350,11 @@ void abFree(struct abuf *ab) {
 /* Output functions */
 void editorScroll() {
   // This function will scroll the screen if the cursor is outside the screen.
+  E.rx = 0;
+  if (E.cy < E.numrows) {
+    // if the cursor is on a row then calculate the render index of the cursor.
+    E.rx = editorRowCxtoRx(&E.row[E.cy], E.cx);
+  }
   if (E.cy < E.rof) {
     // If the cursor is above the screen then scroll up.
     E.rof = E.cy;
@@ -301,12 +363,12 @@ void editorScroll() {
     // If the cursor is below the screen then scroll down.
     E.rof = E.cy - E.screenrows + 1;
   }
-  if (E.cx < E.cof)
+  if (E.rx < E.cof)
     // If the cursor is to the left of the screen then scroll left.
-    E.cof = E.cx;
-  if (E.cx >= E.cof + E.screencols)
+    E.cof = E.rx;
+  if (E.rx >= E.cof + E.screencols)
     // If the cursor is to the right of the screen then scroll right.
-    E.cof = E.cx - E.screencols + 1;
+    E.cof = E.rx - E.screencols + 1;
 }
 void editorDrawRows(struct abuf *ab) {
   // This function will draw the rows of the editor.
@@ -314,7 +376,7 @@ void editorDrawRows(struct abuf *ab) {
   int y;
 
   for (y = 0; y < E.screenrows; y++) {
-    int filerow = y + E.ron;
+    int filerow = y + E.rof;
     if (filerow >= E.numrows) {
       // If the number of rows is less than the number of rows in the terminal
       // then print ~.
@@ -343,10 +405,14 @@ void editorDrawRows(struct abuf *ab) {
         abAppend(ab, "~", 1);
       }
     } else {
-      int len = E.row[filerow].size;
+      int len = E.row[filerow].rsize - E.cof;
+      // len is the length of the row.
+      if (len < 0)
+        len = 0;
       if (len > E.screencols)
         len = E.screencols;
-      abAppend(ab, E.row[filerow].chars, len);
+      abAppend(ab, &E.row[filerow].render[E.cof], len);
+      // abAppend() appends a string to the append buffer.
     }
 
     abAppend(ab, "\x1b[K", 3);
@@ -371,7 +437,7 @@ void editorRefreshScreen() {
   // cursor to the top left corner of the screen.
   editorDrawRows(&ab);
   char buf[32];
-  snprintf(buf, sizeof(buf), "\x1b[%d;%dH", E.cy - E.rof + 1, E.cx - E.cof + 1);
+  snprintf(buf, sizeof(buf), "\x1b[%d;%dH", E.cy - E.rof + 1, E.rx - E.cof + 1);
   // This will move the cursor to the position of the cursor.
   abAppend(&ab, buf, strlen(buf));
   // This will move the cursor to the position of the cursor.
@@ -470,6 +536,7 @@ void initEditor() {
   // This function will initialise the editor.
   E.cx = 0;
   E.cy = 0;
+  E.rx = 0;
   E.rof = 0;
   E.cof = 0;
   E.numrows = 0;
