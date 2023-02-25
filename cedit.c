@@ -305,6 +305,35 @@ void editorAppendRow(char *s, size_t len) {
   // Increment the number of rows.
 }
 
+void editorRowInsertChar(editor_row *row, int at, int c) {
+  // This function will insert a character at a given position in the row.
+  if (at < 0 || at > row->size)
+    // If the position is less than 0 or greater than the size of the row
+    // then set the position to the size of the row.
+    at = row->size;
+
+  row->chars = realloc(row->chars, row->size + 2);
+  // size is plus 2 because we are adding a character and a null character.
+  memmove(&row->chars[at + 1], &row->chars[at], row->size - at + 1);
+  // memmove() will move the characters after the position at by one position
+  // to the right.
+  row->size++;
+  row->chars[at] = c;
+  editorUpdateRow(row);
+}
+
+/* editor functions */
+void editorInsertChar(int c) {
+  // This function will insert a character at the cursor position.
+  if (E.cy == E.numrows) {
+    // If the cursor is at the end of the file then append a new row.
+    editorAppendRow("", 0);
+  }
+  editorRowInsertChar(&E.row[E.cy], E.cx, c);
+  // Insert the character at the cursor position.
+  E.cx++;
+}
+
 /* file input output */
 void editorOpen(char *filename) {
   // This function will open the file and read the contents into the buffer.
@@ -616,6 +645,8 @@ void editorProcessKeypress() {
   case ARROW_DOWN:
     editorMoveCursor(c);
     break;
+  default:
+    editorInsertChar(c);
   }
 }
 
